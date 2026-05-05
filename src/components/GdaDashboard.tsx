@@ -1,8 +1,17 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import { Agent, FilterState } from "./types";
 import { AGENTS } from "@/data/agents";
+
+const POLL_INTERVAL = 60_000; // atualiza a cada 60 segundos
+
+function formatTimeAgo(date: Date): string {
+  const diff = Math.floor((Date.now() - date.getTime()) / 1000);
+  if (diff < 60) return "agora mesmo";
+  if (diff < 3600) return `há ${Math.floor(diff / 60)} min`;
+  return `há ${Math.floor(diff / 3600)}h`;
+}
 
 // ─── Icons ───────────────────────────────────────────────────
 const IconSearch = () => (
@@ -181,16 +190,45 @@ function ModeloBadge({ value }: { value: string }) {
 const MODELS = ["MASTER", "CANAL DIRETO", "MICROCREDITO"];
 
 export default function GdaDashboard({ initialData = AGENTS }: { initialData?: Agent[] }) {
+  const [liveData, setLiveData] = useState<Agent[] | null>(null);
+  const [syncStatus, setSyncStatus] = useState<"initial" | "ok" | "error">("initial");
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+
+  const fetchAgents = useCallback(async () => {
+    try {
+      const res = await fetch("/api/agents");
+      if (!res.ok) throw new Error("HTTP error");
+      const json = await res.json();
+      if (Array.isArray(json.agents) && json.agents.length > 0) {
+        setLiveData(json.agents);
+        setLastUpdated(new Date(json.lastUpdated));
+        setSyncStatus("ok");
+      } else if (json.error) {
+        setSyncStatus("error");
+      }
+    } catch {
+      setSyncStatus("error");
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchAgents();
+    const interval = setInterval(fetchAgents, POLL_INTERVAL);
+    return () => clearInterval(interval);
+  }, [fetchAgents]);
+
+  const data = liveData ?? initialData;
+
   const [filters, setFilters] = useState<FilterState>({
     busca: "", uf: "", modelo: "", inscricao: "", calibracao: "", devolutiva: "",
   });
 
-  const ufs = useMemo(() => [...new Set(initialData.map((d) => d.uf))].sort(), [initialData]);
+  const ufs = useMemo(() => Array.from(new Set(data.map((d) => d.uf))).sort(), [data]);
 
   // Filtered by everything except model — used by segment cards
   const baseFiltered = useMemo(() => {
     const q = filters.busca.toLowerCase();
-    return initialData.filter((d) => {
+    return data.filter((d) => {
       if (q && !["ag", "grupo", "reg", "bp"].some((k) => d[k as keyof Agent].toLowerCase().includes(q))) return false;
       if (filters.uf && d.uf !== filters.uf) return false;
       if (filters.inscricao && d.insc !== filters.inscricao) return false;
@@ -198,7 +236,7 @@ export default function GdaDashboard({ initialData = AGENTS }: { initialData?: A
       if (filters.devolutiva && d.dev !== filters.devolutiva) return false;
       return true;
     });
-  }, [filters, initialData]);
+  }, [filters, data]);
 
   // Fully filtered (used by table)
   const filtered = useMemo(() => {
@@ -238,17 +276,43 @@ export default function GdaDashboard({ initialData = AGENTS }: { initialData?: A
       >
         <div className="flex items-center gap-3">
           <div
-            className="w-10 h-10 bg-[#FF6B00] rounded-xl flex items-center justify-center flex-shrink-0"
-            style={{ boxShadow: "0 4px 14px rgba(255,107,0,0.45)" }}
+            className="h-10 rounded-xl flex-shrink-0 flex items-center justify-center px-3"
+            style={{
+              background: "linear-gradient(135deg, #FF4500 0%, #FFAA00 100%)",
+              boxShadow: "0 4px 14px rgba(255,107,0,0.45)",
+            }}
           >
-            <span className="text-white font-extrabold text-base tracking-tight select-none">O</span>
+            <img src="/logo-gda.png" alt="Gente do Agente" className="h-7 w-auto object-contain" />
           </div>
           <div>
-            <p className="text-white font-semibold text-[13px] leading-tight">Dashboard GDA</p>
+            <p className="text-white font-semibold text-[13px] leading-tight">Dashboard Gente do Agente</p>
             <p className="text-white/50 text-[11px] mt-0.5">Mapeamento de Agentes · OMNI</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {/* Sync indicator */}
+          <div className="flex items-center gap-1.5">
+            {syncStatus === "ok" && (
+              <>
+                <div className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                <span className="text-[10px] text-white/50">
+                  {lastUpdated ? formatTimeAgo(lastUpdated) : "sincronizado"}
+                </span>
+              </>
+            )}
+            {syncStatus === "error" && (
+              <>
+                <div className="w-1.5 h-1.5 rounded-full bg-red-400" />
+                <span className="text-[10px] text-white/50">erro ao sincronizar</span>
+              </>
+            )}
+            {syncStatus === "initial" && (
+              <>
+                <div className="w-1.5 h-1.5 rounded-full bg-white/30 animate-pulse" />
+                <span className="text-[10px] text-white/50">carregando...</span>
+              </>
+            )}
+          </div>
           {activeTheme && (
             <span className={`text-xs px-3 py-1 rounded-full font-semibold border ${activeTheme.headerIndicator}`}>
               {filters.modelo}
@@ -333,7 +397,7 @@ export default function GdaDashboard({ initialData = AGENTS }: { initialData?: A
         )}
         {hasFilters && (
           <span className="ml-auto text-[11px] text-gray-400 font-medium">
-            {filtered.length} de {initialData.length} resultados
+            {filtered.length} de {data.length} resultados
           </span>
         )}
       </div>
@@ -370,7 +434,7 @@ export default function GdaDashboard({ initialData = AGENTS }: { initialData?: A
                   key={`${d.cod}-${i}`}
                   className={`border-b border-black/[0.04] hover:bg-blue-50/60 transition-colors ${i % 2 === 0 ? "bg-white" : "bg-gray-50/50"}`}
                 >
-                  <td className="px-3 py-2 text-gray-400 text-[11px] font-mono">{d.cod}</td>
+                  <td className="px-3 py-2 text-gray-400 text-[11px]">{d.cod}</td>
                   <td className="px-3 py-2 font-semibold text-gray-800">{d.ag}</td>
                   <td className="px-3 py-2">
                     <span className="bg-[#E8EEF8] text-[#003087] text-[10px] font-bold px-1.5 py-0.5 rounded">{d.uf}</span>
@@ -383,7 +447,7 @@ export default function GdaDashboard({ initialData = AGENTS }: { initialData?: A
                   <td className="px-3 py-2"><StatusPill value={d.dev} /></td>
                   <td className="px-3 py-2 text-gray-500 max-w-[130px] truncate" title={d.reg}>{d.reg}</td>
                   <td className="px-3 py-2 text-gray-500 max-w-[170px] truncate" title={d.grupo}>{d.grupo}</td>
-                  <td className="px-3 py-2 text-gray-500 text-[11px] font-mono">{d.bp}</td>
+                  <td className="px-3 py-2 text-gray-500 text-[11px]">{d.bp}</td>
                 </tr>
               ))
             )}

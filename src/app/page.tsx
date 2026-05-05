@@ -13,7 +13,13 @@ export default function Home() {
             <span className="font-bold text-[#003087] text-sm tracking-tight">OMNI</span>
           </div>
         </div>
-        <span className="text-[11px] text-gray-400 font-medium">GDA · Gestão de Dados de Agentes</span>
+        <div
+          className="flex items-center justify-center px-3 py-1 rounded-md flex-shrink-0"
+          style={{ background: "linear-gradient(135deg, #FF4500 0%, #FFAA00 100%)" }}
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/logo-gda.png" alt="Gente do Agente" className="h-7 w-auto object-contain" />
+        </div>
       </header>
 
       {/* Page content */}
@@ -21,7 +27,7 @@ export default function Home() {
         <div className="mb-5">
           <h1 className="text-[17px] font-bold text-gray-900 tracking-tight">Mapeamento de Agentes</h1>
           <p className="text-[13px] text-gray-500 mt-0.5">
-            Acompanhe o status de inscrição, calibração e devolutiva dos agentes GDA.
+            Acompanhe o status de inscrição, calibração e devolutiva dos agentes Gente do Agente.
           </p>
         </div>
         <GdaDashboard />
