@@ -30,15 +30,17 @@ function parseCSVRow(line: string): string[] {
 }
 
 function normalizeHeader(h: string): string {
-  return h
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .replace(/[^a-z0-9]/g, '');
+  // Remove combining diacritical marks (U+0300–U+036F) without regex Unicode range
+  const withoutAccents = Array.from(h.normalize('NFD'))
+    .filter((ch) => {
+      const code = ch.charCodeAt(0);
+      return code < 0x0300 || code > 0x036f;
+    })
+    .join('');
+  return withoutAccents.toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
 // Mapeia cabeçalho normalizado → propriedade do Agent
-// Ajuste conforme os cabeçalhos reais da sua planilha
 const HEADER_MAP: Record<string, keyof Agent> = {
   cod: 'cod',
   codigo: 'cod',
@@ -52,23 +54,29 @@ const HEADER_MAP: Record<string, keyof Agent> = {
   inscricao: 'insc',
   insc: 'insc',
   calibracao: 'cal',
+  calibracao2: 'cal',
   cal: 'cal',
   devolutiva: 'dev',
   dev: 'dev',
   modelo: 'mod',
   mod: 'mod',
+  segmento: 'mod',
   grupo: 'grupo',
   regional: 'reg',
   reg: 'reg',
   bp: 'bp',
 };
 
+// Fallback posicional caso os cabeçalhos não sejam reconhecidos
+// (assume a ordem padrão: cod, ag, uf, insc, cal, dev, mod, grupo, reg, bp)
+const POSITIONAL_KEYS: (keyof Agent)[] = [
+  'cod', 'ag', 'uf', 'insc', 'cal', 'dev', 'mod', 'grupo', 'reg', 'bp',
+];
+
 export async function GET() {
   try {
     const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/export?format=csv&gid=${SHEET_GID}`;
-    const res = await fetch(url, {
-      next: { revalidate: 60 },
-    });
+    const res = await fetch(url, { cache: 'no-store' });
 
     if (!res.ok) {
       return NextResponse.json(
@@ -85,7 +93,12 @@ export async function GET() {
     }
 
     const rawHeaders = parseCSVRow(lines[0]);
-    const headerKeys = rawHeaders.map((h) => HEADER_MAP[normalizeHeader(h)] ?? null);
+    const normalizedHeaders = rawHeaders.map(normalizeHeader);
+    const headerKeys = normalizedHeaders.map((h) => HEADER_MAP[h] ?? null);
+
+    // Verifica quantos cabeçalhos foram reconhecidos
+    const mappedCount = headerKeys.filter(Boolean).length;
+    const useFallback = mappedCount < 3; // menos de 3 colunas mapeadas → usa posicional
 
     const agents: Agent[] = [];
     for (let i = 1; i < lines.length; i++) {
@@ -93,14 +106,25 @@ export async function GET() {
       if (cells.every((c) => !c)) continue;
 
       const agent: Partial<Agent> = {};
-      headerKeys.forEach((key, j) => {
-        if (key) (agent as Record<string, string>)[key] = cells[j] ?? '';
-      });
+
+      if (useFallback) {
+        POSITIONAL_KEYS.forEach((key, j) => {
+          (agent as Record<string, string>)[key] = cells[j] ?? '';
+        });
+      } else {
+        headerKeys.forEach((key, j) => {
+          if (key) (agent as Record<string, string>)[key] = cells[j] ?? '';
+        });
+      }
 
       if (agent.cod || agent.ag) agents.push(agent as Agent);
     }
 
-    return NextResponse.json({ agents, lastUpdated: new Date().toISOString() });
+    return NextResponse.json({
+      agents,
+      lastUpdated: new Date().toISOString(),
+      debug: { headers: normalizedHeaders, mappedCount, useFallback },
+    });
   } catch (err) {
     console.error('[/api/agents]', err);
     return NextResponse.json({ error: 'Erro interno ao buscar dados' }, { status: 500 });
